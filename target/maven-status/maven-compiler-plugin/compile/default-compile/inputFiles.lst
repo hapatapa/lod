@@ -1,0 +1,12 @@
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/LODBootstrapper.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/LODCommand.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/LODPlugin.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/data/LODSignature.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/engine/LODDistance.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/engine/LODManager.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/engine/LODQuality.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/engine/PlayerSession.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/engine/VirtualDisplayEntity.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/io/AnvilScanner.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/ui/LODDialogManager.java
+/home/hapatapa/Downloads/lod/src/main/java/com/hapatapa/lod/util/SettingsManager.java

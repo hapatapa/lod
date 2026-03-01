@@ -1,0 +1,14 @@
+# LOD System Configuration
+# Global administrator settings
+admin:
+  # Whether the plugin should generate new chunks to create LODs
+  chunk-generation-enabled: true
+  # Whether to use the internal scan cache
+  cache-enabled: true
+
+# Player preferences (automatically managed)
+players:
+  # Example:
+  # uuid-here:
+  #   distance: HIGH_FIDELITY
+  #   quality: LOW

@@ -1,0 +1,11 @@
+name: LODSystem
+version: 1.0-SNAPSHOT
+main: com.hapatapa.lod.LODPlugin
+bootstrapper: com.hapatapa.lod.LODBootstrapper
+api-version: '1.21'
+description: A high-performance Distributed Voxel LOD System using Block Display Entities.
+dependencies:
+  server:
+    PackHost:
+      load: BEFORE
+      required: true

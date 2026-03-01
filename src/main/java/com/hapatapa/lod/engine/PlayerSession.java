@@ -1,0 +1,379 @@
+package com.hapatapa.lod.engine;
+
+import com.hapatapa.lod.data.LODSignature;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+import org.joml.Matrix4f;
+
+import java.util.*;
+
+public class PlayerSession {
+
+    private final Player player;
+    private final LODManager manager;
+    private LODDistance distance = LODDistance.HIGH_FIDELITY;
+    private LODQuality quality = LODQuality.LOW;
+
+    private final Map<Long, VirtualDisplayEntity[]> activeEntities = new HashMap<>();
+    private final Map<Long, Location[]> entityAnchors = new HashMap<>();
+    private final Map<Long, int[]> entityHeights = new HashMap<>();
+    private final Queue<VirtualDisplayEntity> entityPool = new LinkedList<>();
+
+    private int tickCounter = 0;
+    private final List<Long> scanQueue = new ArrayList<>();
+    private int scanIndex = 0;
+
+    private final List<Long> anchorRefreshQueue = new ArrayList<>();
+    private int anchorRefreshIndex = 0;
+
+    private int lastCX = Integer.MAX_VALUE;
+    private int lastCZ = Integer.MAX_VALUE;
+
+    public PlayerSession(Player player, LODManager manager) {
+        this.player = player;
+        this.manager = manager;
+    }
+
+    public void update() {
+        if (!player.isOnline())
+            return;
+
+        tickCounter++;
+        Location pLoc = player.getLocation();
+        int pCX = pLoc.getBlockX() >> 4;
+        int pCZ = pLoc.getBlockZ() >> 4;
+
+        if (pCX != lastCX || pCZ != lastCZ || tickCounter % 40 == 0) {
+            recalculateDesiredChunks(pLoc, pCX, pCZ);
+            lastCX = pCX;
+            lastCZ = pCZ;
+        }
+
+        processScanQueue(10);
+        processCleanupQueue(20);
+        processAnchorRefresh(15);
+    }
+
+    private final List<Long> cleanupQueue = new ArrayList<>();
+
+    private void recalculateDesiredChunks(Location pLoc, int pCX, int pCZ) {
+        World world = player.getWorld();
+        int radius = distance.getRadius();
+        int radiusSq = radius * radius;
+
+        int serverVD = Bukkit.getViewDistance();
+        int worldVD = world.getViewDistance();
+        int clientVD = player.getClientViewDistance();
+        if (clientVD == 0)
+            clientVD = 10;
+
+        float renderDist = (float) Math.min(clientVD, Math.min(serverVD, worldVD));
+
+        Set<Long> nextDesired = new HashSet<>();
+        List<Long> newTargets = new ArrayList<>();
+
+        double px = pLoc.getX();
+        double pz = pLoc.getZ();
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                float distSq = dx * dx + dz * dz;
+                if (distSq > radiusSq)
+                    continue;
+
+                int ratio;
+                if (distSq < 22 * 22)
+                    ratio = 1;
+                else if (distSq < 42 * 42)
+                    ratio = 2;
+                else
+                    ratio = 4;
+
+                int targetCX = pCX + dx;
+                int targetCZ = pCZ + dz;
+                int alignedCX = Math.floorDiv(targetCX, ratio) * ratio;
+                int alignedCZ = Math.floorDiv(targetCZ, ratio) * ratio;
+
+                double minX = (alignedCX << 4);
+                double maxX = ((alignedCX + ratio) << 4);
+                double minZ = (alignedCZ << 4);
+                double maxZ = ((alignedCZ + ratio) << 4);
+
+                double closestX = Math.max(minX, Math.min(px, maxX));
+                double closestZ = Math.max(minZ, Math.min(pz, maxZ));
+
+                double diffX = px - closestX;
+                double diffZ = pz - closestZ;
+                double nearestDistSq = diffX * diffX + diffZ * diffZ;
+
+                double renderDistThresholdSq = (renderDist * 16.0) * (renderDist * 16.0);
+
+                boolean shouldShow = false;
+                if (nearestDistSq >= renderDistThresholdSq) {
+                    shouldShow = true;
+                } else if (!world.isChunkLoaded(targetCX, targetCZ)) {
+                    shouldShow = true;
+                }
+
+                if (shouldShow) {
+                    long key = LODManager.getChunkKey(world, alignedCX, alignedCZ, ratio);
+                    if (nextDesired.add(key) && !activeEntities.containsKey(key)) {
+                        newTargets.add(key);
+                    }
+                }
+            }
+        }
+
+        cleanupQueue.clear();
+        for (long key : activeEntities.keySet()) {
+            if (!nextDesired.contains(key))
+                cleanupQueue.add(key);
+        }
+
+        newTargets.sort(Comparator.comparingDouble(key -> {
+            double ddx = LODManager.unpackX(key) - pCX;
+            double ddz = LODManager.unpackZ(key) - pCZ;
+            return ddx * ddx + ddz * ddz;
+        }));
+
+        scanQueue.clear();
+        scanQueue.addAll(newTargets);
+        scanIndex = 0;
+
+        anchorRefreshQueue.clear();
+        anchorRefreshQueue.addAll(activeEntities.keySet());
+        anchorRefreshIndex = 0;
+    }
+
+    private void processCleanupQueue(int max) {
+        int count = 0;
+        Iterator<Long> it = cleanupQueue.iterator();
+        while (it.hasNext() && count < max) {
+            long key = it.next();
+            VirtualDisplayEntity[] entities = activeEntities.remove(key);
+            if (entities != null) {
+                for (VirtualDisplayEntity entity : entities) {
+                    if (entity != null) {
+                        entity.remove(player);
+                        if (entityPool.size() < 4000)
+                            entityPool.offer(entity);
+                    }
+                }
+            }
+            entityAnchors.remove(key);
+            entityHeights.remove(key);
+            it.remove();
+            count++;
+        }
+    }
+
+    private void processScanQueue(int count) {
+        if (scanQueue.isEmpty())
+            return;
+        World world = player.getWorld();
+        int processed = 0;
+        while (scanIndex < scanQueue.size() && processed < count) {
+            long key = scanQueue.get(scanIndex++);
+            if (activeEntities.containsKey(key))
+                continue;
+
+            int cx = LODManager.unpackX(key);
+            int cz = LODManager.unpackZ(key);
+            int ratio = LODManager.unpackY(key);
+
+            LODSignature sig = manager.getSignature(world, cx, cz, quality.getSubdivX(), quality.getSubdivZ());
+            if (sig != null) {
+                spawnLOD(key, cx, cz, ratio, sig);
+                processed++;
+            } else {
+                manager.requestScan(world, cx, cz, quality.getSubdivX(), quality.getSubdivZ());
+            }
+        }
+    }
+
+    private void processAnchorRefresh(int max) {
+        if (anchorRefreshQueue.isEmpty())
+            return;
+        Location pLoc = player.getLocation();
+        int count = 0;
+        int size = anchorRefreshQueue.size();
+        for (int i = 0; i < size && count < max; i++) {
+            if (anchorRefreshIndex >= size)
+                anchorRefreshIndex = 0;
+            long key = anchorRefreshQueue.get(anchorRefreshIndex++);
+
+            VirtualDisplayEntity[] entities = activeEntities.get(key);
+            if (entities == null)
+                continue;
+
+            Location[] anchors = entityAnchors.get(key);
+            if (anchors == null || anchors.length == 0 || anchors[0] == null)
+                continue;
+
+            if (pLoc.distanceSquared(anchors[0]) > 4096) {
+                int ratio = LODManager.unpackY(key);
+                int[] heights = entityHeights.get(key);
+                if (heights == null)
+                    continue;
+
+                int subdivX = quality.getSubdivX();
+                int subdivZ = quality.getSubdivZ();
+
+                LODSignature sig = manager.getSignature(player.getWorld(), LODManager.unpackX(key),
+                        LODManager.unpackZ(key), subdivX, subdivZ);
+                if (sig == null)
+                    continue;
+
+                for (int idx = 0; idx < entities.length; idx++) {
+                    VirtualDisplayEntity entity = entities[idx];
+                    if (entity == null)
+                        continue;
+
+                    int sx = idx / subdivZ;
+                    int sz = idx % subdivZ;
+                    int h = heights[idx];
+                    Location newAnchor = calculateAnchor(pLoc, LODManager.unpackX(key), LODManager.unpackZ(key), h);
+
+                    entity.remove(player);
+                    entity.setLocation(newAnchor);
+                    anchors[idx] = newAnchor;
+                    float thickness = (idx < sig.thicknesses().length) ? sig.thicknesses()[idx] : 10.0f;
+                    updateMatrix(entity, key, newAnchor, ratio, sx, sz, subdivX, subdivZ, h, thickness);
+                    entity.spawn(player);
+                    entity.updateMetadata(player);
+                }
+                count++;
+            }
+        }
+    }
+
+    private void spawnLOD(long key, int cx, int cz, int ratio, LODSignature sig) {
+        Location pLoc = player.getLocation();
+        int subdivX = sig.subdivX();
+        int subdivZ = sig.subdivZ();
+        int totalEntities = subdivX * subdivZ;
+
+        VirtualDisplayEntity[] entities = new VirtualDisplayEntity[totalEntities];
+        Location[] anchors = new Location[totalEntities];
+        int[] heights = new int[totalEntities];
+
+        for (int sx = 0; sx < subdivX; sx++) {
+            for (int sz = 0; sz < subdivZ; sz++) {
+                int idx = sx * subdivZ + sz;
+                int y = sig.sampledHeights()[idx];
+                Location anchor = calculateAnchor(pLoc, cx, cz, y);
+
+                VirtualDisplayEntity entity = entityPool.poll();
+                if (entity == null) {
+                    entity = new VirtualDisplayEntity(anchor.clone(), sig.blockData()[idx], sig.biomeColors()[idx]);
+                } else {
+                    entity.setBlockData(sig.blockData()[idx], sig.biomeColors()[idx], sig.thicknesses()[idx]);
+                    entity.setLocation(anchor.clone());
+                }
+
+                entities[idx] = entity;
+                anchors[idx] = anchor;
+                heights[idx] = y;
+
+                float thickness = (idx < sig.thicknesses().length) ? sig.thicknesses()[idx] : 10.0f;
+                updateMatrix(entity, key, anchor, ratio, sx, sz, subdivX, subdivZ, y, thickness);
+                entity.spawn(player);
+                entity.updateMetadata(player);
+            }
+        }
+
+        entityHeights.put(key, heights);
+        entityAnchors.put(key, anchors);
+        activeEntities.put(key, entities);
+    }
+
+    private void updateMatrix(VirtualDisplayEntity entity, long key, Location anchor, int ratio, int sx, int sz,
+            int subdivX, int subdivZ, int h, float thickness) {
+        int cx = LODManager.unpackX(key);
+        int cz = LODManager.unpackZ(key);
+        float wy = (float) h;
+
+        float sideX = (16.0f * ratio) / subdivX;
+        float sideZ = (16.0f * ratio) / subdivZ;
+        float overlap = 0.1f;
+        float scaleX = sideX + overlap;
+        float scaleZ = sideZ + overlap;
+
+        float wx = (cx << 4) + (sx * sideX);
+        float wz = (cz << 4) + (sz * sideZ);
+
+        float ax = (float) anchor.getX();
+        float ay = (float) anchor.getY();
+        float az = (float) anchor.getZ();
+
+        float transX = wx - ax;
+        float transY = wy - ay - thickness + 0.05f;
+        float transZ = wz - az;
+
+        if (entity.isItemDisplay()) {
+            transX += scaleX / 2.0f;
+            transY += thickness / 2.0f;
+            transZ += scaleZ / 2.0f;
+        }
+
+        Matrix4f matrix = new Matrix4f().translate(transX, transY, transZ);
+        if (entity.isItemDisplay())
+            matrix.rotateY((float) Math.PI);
+        matrix.scale(scaleX, thickness, scaleZ);
+        entity.setTransformation(matrix);
+    }
+
+    private Location calculateAnchor(Location pLoc, int cx, int cz, int y) {
+        double tx = (cx << 4) + 8.0;
+        double tz = (cz << 4) + 8.0;
+        Vector dir = new Vector(tx - pLoc.getX(), 0, tz - pLoc.getZ());
+        if (dir.lengthSquared() > 0) {
+            dir.normalize().multiply(12.0);
+        }
+        return pLoc.clone().add(dir).add(0, -2, 0);
+    }
+
+    public void clear() {
+        activeEntities.values().forEach(entities -> {
+            for (VirtualDisplayEntity e : entities)
+                if (e != null)
+                    e.remove(player);
+        });
+        activeEntities.clear();
+        entityAnchors.clear();
+        entityHeights.clear();
+        entityPool.clear();
+        scanQueue.clear();
+        cleanupQueue.clear();
+        anchorRefreshQueue.clear();
+        lastCX = Integer.MAX_VALUE;
+    }
+
+    public void setDistance(LODDistance distance) {
+        this.distance = distance;
+        clear();
+    }
+
+    public void setQuality(LODQuality quality) {
+        this.quality = quality;
+        clear();
+    }
+
+    public int getActiveEntityCount() {
+        int count = 0;
+        for (VirtualDisplayEntity[] entities : activeEntities.values())
+            count += entities.length;
+        return count;
+    }
+
+    public LODDistance getDistance() {
+        return distance;
+    }
+
+    public LODQuality getQuality() {
+        return quality;
+    }
+}
