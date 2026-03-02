@@ -50,8 +50,20 @@ public class LODBootstrapper implements PluginBootstrap {
                                                                                         "LOD Settings",
                                                                                         NamedTextColor.GOLD))
                                                                                         .canCloseWithEscape(true)
+                                                                                        .inputs(List.of(
+                                                                                                        io.papermc.paper.registry.data.dialog.input.DialogInput
+                                                                                                                        .numberRange("fov",
+                                                                                                                                        Component.text("FOV (Culling Buffer: +20)",
+                                                                                                                                                        NamedTextColor.GREEN),
+                                                                                                                                        30f,
+                                                                                                                                        110f)
+                                                                                                                        .step(1f)
+                                                                                                                        .initial(80f)
+                                                                                                                        .width(300)
+                                                                                                                        .build()))
                                                                                         .build())
                                                                         .type(DialogType.multiAction(List.of(
+                                                                                        createFovButton(),
                                                                                         createDistanceButton(
                                                                                                         "Distance: High",
                                                                                                         LODDistance.HIGH_FIDELITY,
@@ -223,6 +235,32 @@ public class LODBootstrapper implements PluginBootstrap {
                                                                         .text("LOD Quality set to: ",
                                                                                         NamedTextColor.GRAY)
                                                                         .append(Component.text(quality.name(), color)));
+                                                }
+                                        }
+                                }, ClickCallback.Options.builder().uses(100).build()))
+                                .build();
+        }
+
+        private ActionButton createFovButton() {
+                return ActionButton.builder(Component.text("Save FOV & Apply", NamedTextColor.AQUA))
+                                .action(DialogAction.customClick((view, audience) -> {
+                                        float val = view.getFloat("fov");
+                                        if (audience instanceof Player p) {
+                                                LODPlugin plugin = LODPlugin.getInstance();
+                                                if (plugin != null && plugin.getLodManager() != null) {
+                                                        plugin.getLodManager().getSession(p).setFov(val);
+                                                        p.sendMessage(Component.text(
+                                                                        "FOV set to " + (int) val + " (Culling at "
+                                                                                        + (int) (val + 20) + "°)",
+                                                                        NamedTextColor.GREEN));
+                                                        // Attempt to reopen the dialog (so they see it updated if
+                                                        // needed)
+                                                        io.papermc.paper.dialog.Dialog settingsMenu = io.papermc.paper.registry.RegistryAccess
+                                                                        .registryAccess()
+                                                                        .getRegistry(io.papermc.paper.registry.RegistryKey.DIALOG)
+                                                                        .get(Key.key("lod:settings"));
+                                                        if (settingsMenu != null)
+                                                                p.showDialog(settingsMenu);
                                                 }
                                         }
                                 }, ClickCallback.Options.builder().uses(100).build()))

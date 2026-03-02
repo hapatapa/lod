@@ -13,11 +13,13 @@ import java.util.*;
 public class PlayerSession {
 
     private static final boolean USE_TELEPORTATION = true; // Toggle for teleportation vs remove/respawn
+    private double cullingCosine = Math.cos(Math.toRadians(160.0 / 2.0));
 
     private final Player player;
     private final LODManager manager;
     private LODDistance distance = LODDistance.HIGH_FIDELITY;
     private LODQuality quality = LODQuality.LOW;
+    private float fov = 70.0f;
 
     private final Map<Long, VirtualDisplayEntity[]> activeEntities = new HashMap<>();
     private final Map<Long, Location[]> entityAnchors = new HashMap<>();
@@ -33,6 +35,8 @@ public class PlayerSession {
 
     private int lastCX = Integer.MAX_VALUE;
     private int lastCZ = Integer.MAX_VALUE;
+    private float lastYaw = 0f;
+    private float lastPitch = 0f;
 
     public PlayerSession(Player player, LODManager manager) {
         this.player = player;
@@ -47,11 +51,18 @@ public class PlayerSession {
         Location pLoc = player.getLocation();
         int pCX = pLoc.getBlockX() >> 4;
         int pCZ = pLoc.getBlockZ() >> 4;
+        float yaw = pLoc.getYaw();
+        float pitch = pLoc.getPitch();
 
-        if (pCX != lastCX || pCZ != lastCZ || tickCounter % 40 == 0) {
+        // More frequent rotation-based updates (0.5 degree threshold)
+        boolean rotated = Math.abs(yaw - lastYaw) > 0.5f || Math.abs(pitch - lastPitch) > 0.5f;
+
+        if (pCX != lastCX || pCZ != lastCZ || rotated || (tickCounter & 7) == 0) {
             recalculateDesiredChunks(pLoc, pCX, pCZ);
             lastCX = pCX;
             lastCZ = pCZ;
+            lastYaw = yaw;
+            lastPitch = pitch;
         }
 
         // Aggressive Budgeting for visual stability:
@@ -91,36 +102,70 @@ public class PlayerSession {
             clientVD = 10;
 
         float renderDist = (float) Math.min(clientVD, Math.min(serverVD, worldVD));
+        double renderDistThresholdSq = (renderDist * 16.0) * (renderDist * 16.0);
 
         Set<Long> nextDesired = new HashSet<>();
         List<Long> newTargets = new ArrayList<>();
 
         double px = pLoc.getX();
+        double py = pLoc.getY();
         double pz = pLoc.getZ();
+
+        Vector viewDir = pLoc.getDirection();
+        double vx = viewDir.getX();
+        double vy = viewDir.getY();
+        double vz = viewDir.getZ();
 
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
-                float distSq = dx * dx + dz * dz;
+                int distSq = dx * dx + dz * dz;
                 if (distSq > radiusSq)
                     continue;
 
                 int ratio;
-                if (distSq < 22 * 22)
+                if (distSq < 484) // 22 * 22
                     ratio = 1;
-                else if (distSq < 42 * 42)
+                else if (distSq < 1764) // 42 * 42
                     ratio = 2;
                 else
                     ratio = 4;
 
-                int targetCX = pCX + dx;
-                int targetCZ = pCZ + dz;
-                int alignedCX = Math.floorDiv(targetCX, ratio) * ratio;
-                int alignedCZ = Math.floorDiv(targetCZ, ratio) * ratio;
+                int shift = ratio >> 1; // 1->0, 2->1, 4->2
+                int alignedCX = ((pCX + dx) >> shift) << shift;
+                int alignedCZ = ((pCZ + dz) >> shift) << shift;
 
+                int blockSize = ratio << 4;
                 double minX = (alignedCX << 4);
-                double maxX = ((alignedCX + ratio) << 4);
+                double maxX = minX + blockSize;
                 double minZ = (alignedCZ << 4);
-                double maxZ = ((alignedCZ + ratio) << 4);
+                double maxZ = minZ + blockSize;
+
+                double centerX = minX + (blockSize * 0.5);
+                double centerZ = minZ + (blockSize * 0.5);
+                // Chunk spanning bedrock to sky
+                double centerY = 128.0;
+                double halfY = 192.0;
+                double halfX = blockSize * 0.5;
+                double halfZ = blockSize * 0.5;
+
+                // 3D Sphere-Frustum Culling (Conservative AABB check replacement)
+                double dx_chunk = centerX - px;
+                double dy_chunk = centerY - py;
+                double dz_chunk = centerZ - pz;
+
+                double chunkDistSq = dx_chunk * dx_chunk + dy_chunk * dy_chunk + dz_chunk * dz_chunk;
+                double chunkDist = Math.sqrt(chunkDistSq);
+
+                // Max radius of the chunk's AABB
+                double chunkRadius = Math.sqrt(halfX * halfX + halfY * halfY + halfZ * halfZ);
+
+                if (chunkDist > chunkRadius) {
+                    double dot = vx * dx_chunk + vy * dy_chunk + vz * dz_chunk;
+                    // Standard sphere-frustum check: dot >= dist * cos(halfAngle) - radius
+                    if (dot < (chunkDist * cullingCosine - chunkRadius)) {
+                        continue;
+                    }
+                }
 
                 double closestX = Math.max(minX, Math.min(px, maxX));
                 double closestZ = Math.max(minZ, Math.min(pz, maxZ));
@@ -129,14 +174,8 @@ public class PlayerSession {
                 double diffZ = pz - closestZ;
                 double nearestDistSq = diffX * diffX + diffZ * diffZ;
 
-                double renderDistThresholdSq = (renderDist * 16.0) * (renderDist * 16.0);
-
-                boolean shouldShow = false;
-                if (nearestDistSq >= renderDistThresholdSq) {
-                    shouldShow = true;
-                } else if (!world.isChunkLoaded(targetCX, targetCZ)) {
-                    shouldShow = true;
-                }
+                boolean shouldShow = (nearestDistSq >= renderDistThresholdSq)
+                        || !world.isChunkLoaded(pCX + dx, pCZ + dz);
 
                 if (shouldShow) {
                     long key = LODManager.getChunkKey(world, alignedCX, alignedCZ, ratio);
@@ -401,6 +440,16 @@ public class PlayerSession {
 
     public LODDistance getDistance() {
         return distance;
+    }
+
+    public float getFov() {
+        return fov;
+    }
+
+    public void setFov(float fov) {
+        this.fov = fov;
+        this.cullingCosine = Math.cos(Math.toRadians((fov + 20.0) / 2.0));
+        clear();
     }
 
     public LODQuality getQuality() {

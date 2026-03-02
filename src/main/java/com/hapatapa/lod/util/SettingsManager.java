@@ -33,11 +33,12 @@ public class SettingsManager {
         plugin.saveConfig();
     }
 
-    public void savePlayerSettings(UUID uuid, LODDistance distance, LODQuality quality) {
+    public void savePlayerSettings(UUID uuid, LODDistance distance, LODQuality quality, float fov) {
         FileConfiguration config = plugin.getConfig();
         String path = "players." + uuid.toString();
         config.set(path + ".distance", distance.name());
         config.set(path + ".quality", quality.name());
+        config.set(path + ".fov", fov);
         plugin.saveConfig();
     }
 
@@ -61,6 +62,10 @@ public class SettingsManager {
         } catch (IllegalArgumentException e) {
             return LODQuality.LOW;
         }
+    }
+
+    public float getPlayerFOV(UUID uuid) {
+        return (float) plugin.getConfig().getDouble("players." + uuid.toString() + ".fov", 70.0);
     }
 
     public boolean isChunkGenerationEnabled() {

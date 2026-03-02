@@ -156,6 +156,7 @@ public class LODManager implements Listener {
         // Load settings
         session.setDistance(settingsManager.getPlayerDistance(player.getUniqueId()));
         session.setQuality(settingsManager.getPlayerQuality(player.getUniqueId()));
+        session.setFov(settingsManager.getPlayerFOV(player.getUniqueId()));
 
         activeSessions.put(player.getUniqueId(), session);
     }
@@ -165,7 +166,8 @@ public class LODManager implements Listener {
         Player player = event.getPlayer();
         PlayerSession session = activeSessions.remove(player.getUniqueId());
         if (session != null) {
-            settingsManager.savePlayerSettings(player.getUniqueId(), session.getDistance(), session.getQuality());
+            settingsManager.savePlayerSettings(player.getUniqueId(), session.getDistance(), session.getQuality(),
+                    session.getFov());
             session.clear();
         }
     }
