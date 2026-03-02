@@ -12,6 +12,8 @@ import java.util.*;
 
 public class PlayerSession {
 
+    private static final boolean USE_TELEPORTATION = true; // Toggle for teleportation vs remove/respawn
+
     private final Player player;
     private final LODManager manager;
     private LODDistance distance = LODDistance.HIGH_FIDELITY;
@@ -52,9 +54,27 @@ public class PlayerSession {
             lastCZ = pCZ;
         }
 
-        processScanQueue(40);
-        processCleanupQueue(80);
-        processAnchorRefresh(60);
+        // Aggressive Budgeting for visual stability:
+        // 1. Give massive priority to existing LODs that need an anchor refresh (up to
+        // 500 chunks).
+        // 2. Use a high total budget for new scans (up to 1000 total processed chunks).
+        int totalBudget = 1000;
+        processCleanupQueue(200);
+
+        // Sync the refresh queue with active entities if it becomes significantly
+        // disparate or empty
+        if (anchorRefreshQueue.size() != activeEntities.size() || tickCounter % 100 == 0) {
+            anchorRefreshQueue.clear();
+            anchorRefreshQueue.addAll(activeEntities.keySet());
+            // We do NOT reset anchorRefreshIndex here to maintain fair rotation
+        }
+
+        int refreshed = processAnchorRefresh(500); // 500 chunks per tick for anchors
+        int remainingBudget = totalBudget - refreshed;
+
+        if (remainingBudget > 0) {
+            processScanQueue(remainingBudget);
+        }
     }
 
     private final List<Long> cleanupQueue = new ArrayList<>();
@@ -143,9 +163,8 @@ public class PlayerSession {
         scanQueue.addAll(newTargets);
         scanIndex = 0;
 
-        anchorRefreshQueue.clear();
-        anchorRefreshQueue.addAll(activeEntities.keySet());
-        anchorRefreshIndex = 0;
+        // CRITICAL FIX: Do NOT clear anchorRefreshQueue or reset index here.
+        // The queue is synced periodically in update() to maintain rotation.
     }
 
     private void processCleanupQueue(int max) {
@@ -170,9 +189,9 @@ public class PlayerSession {
         }
     }
 
-    private void processScanQueue(int count) {
+    private int processScanQueue(int count) {
         if (scanQueue.isEmpty())
-            return;
+            return 0;
         World world = player.getWorld();
         int processed = 0;
         while (scanIndex < scanQueue.size() && processed < count) {
@@ -192,11 +211,12 @@ public class PlayerSession {
                 manager.requestScan(world, cx, cz, quality.getSubdivX(), quality.getSubdivZ());
             }
         }
+        return processed;
     }
 
-    private void processAnchorRefresh(int max) {
+    private int processAnchorRefresh(int max) {
         if (anchorRefreshQueue.isEmpty())
-            return;
+            return 0;
         Location pLoc = player.getLocation();
         int count = 0;
         int size = anchorRefreshQueue.size();
@@ -213,7 +233,9 @@ public class PlayerSession {
             if (anchors == null || anchors.length == 0 || anchors[0] == null)
                 continue;
 
-            if (pLoc.distanceSquared(anchors[0]) > 4096) {
+            // Use 3600 (60 blocks) instead of 4096 (64 blocks) as a safety margin for
+            // client culling
+            if (pLoc.distanceSquared(anchors[0]) > 3600) {
                 int ratio = LODManager.unpackY(key);
                 int[] heights = entityHeights.get(key);
                 if (heights == null)
@@ -237,17 +259,25 @@ public class PlayerSession {
                     int h = heights[idx];
                     Location newAnchor = calculateAnchor(pLoc, LODManager.unpackX(key), LODManager.unpackZ(key), h);
 
-                    entity.remove(player);
-                    entity.setLocation(newAnchor);
-                    anchors[idx] = newAnchor;
                     float thickness = (idx < sig.thicknesses().length) ? sig.thicknesses()[idx] : 10.0f;
                     updateMatrix(entity, key, newAnchor, ratio, sx, sz, subdivX, subdivZ, h, thickness);
-                    entity.spawn(player);
-                    entity.updateMetadata(player);
+
+                    if (USE_TELEPORTATION) {
+                        entity.teleport(player, newAnchor);
+                        anchors[idx] = newAnchor;
+                        entity.updateMetadata(player);
+                    } else {
+                        entity.remove(player);
+                        entity.setLocation(newAnchor);
+                        anchors[idx] = newAnchor;
+                        entity.spawn(player);
+                        entity.updateMetadata(player);
+                    }
                 }
                 count++;
             }
         }
+        return count;
     }
 
     private void spawnLOD(long key, int cx, int cz, int ratio, LODSignature sig) {

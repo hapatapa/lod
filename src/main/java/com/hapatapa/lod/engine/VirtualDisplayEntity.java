@@ -10,6 +10,7 @@ import com.github.retrooper.packetevents.util.Quaternion4f;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -156,6 +157,17 @@ public class VirtualDisplayEntity {
             return;
         WrapperPlayServerDestroyEntities destroy = new WrapperPlayServerDestroyEntities(entityId);
         PacketEvents.getAPI().getPlayerManager().sendPacket(player, destroy);
+    }
+
+    public void teleport(Player player, Location newLoc) {
+        if (!isPlayerReady(player))
+            return;
+        this.location = newLoc;
+        WrapperPlayServerEntityTeleport teleport = new WrapperPlayServerEntityTeleport(
+                entityId,
+                new Vector3d(newLoc.getX(), newLoc.getY(), newLoc.getZ()),
+                0f, 0f, true);
+        PacketEvents.getAPI().getPlayerManager().sendPacket(player, teleport);
     }
 
     public void setTransformation(Matrix4f transformation) {

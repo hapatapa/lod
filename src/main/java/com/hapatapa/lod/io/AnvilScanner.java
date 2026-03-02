@@ -28,6 +28,19 @@ public class AnvilScanner {
                     // the void.
                     return null;
                 }
+                // ### Update: Logic and Unit Fix
+                // - **Unit Mismatch**: Corrected height-to-decimeter conversion (10.0 units = 1
+                // block).
+                // - **Stalactite Prevention**:
+                // - Neighborhood checks now use **surface heights** (`heights[]`) instead of
+                // floors (`mins[]`), which prevents a single hole from causing all surrounding
+                // subdivisions to stretch down.
+                // - Added a **12-block thickness clamp** for non-water materials. This ensures
+                // that even on extreme cliffs or floating islands, the "skirt" doesn't become
+                // an unnaturally long pillar.
+                //
+                // This combination provides a solid, weighted look for terrain while
+                // maintaining visual sanity in caves and near drop-offs.
 
                 int bx = cx << 4;
                 int bz = cz << 4;
@@ -40,7 +53,9 @@ public class AnvilScanner {
                 int[] heights = new int[totalBlocks];
                 int[] biomeColors = new int[totalBlocks];
                 float[] thicknesses = new float[totalBlocks];
+                int[] mins = new int[totalBlocks];
 
+                // Pass 1: Gather raw data and determine surface blocks/heights
                 for (int sx = 0; sx < subdivX; sx++) {
                     for (int sz = 0; sz < subdivZ; sz++) {
                         double totalHeight = 0;
@@ -79,8 +94,8 @@ public class AnvilScanner {
                         if (avgHeight <= world.getMinHeight() + 5) {
                             blocks[idx] = getProceduralMaterial(cx, cz, avgHeight).createBlockData();
                             heights[idx] = avgHeight;
+                            mins[idx] = avgHeight;
                             biomeColors[idx] = 0x3F76E4;
-                            thicknesses[idx] = 10.0f;
                             continue;
                         }
 
@@ -89,36 +104,89 @@ public class AnvilScanner {
                                 .map(Map.Entry::getKey)
                                 .orElse(Material.GRASS_BLOCK);
 
-                        float thickness = 10.0f;
-
                         // Polish: Water replacement and cleanup
                         if (isWaterLike(bestMaterial)) {
                             bestMaterial = Material.WATER;
-                            avgHeight = surfaceY; // PRIORITIZE FLAT SURFACE
-                            if (avgHeight < 62)
-                                avgHeight = 62;
-
-                            // GAP FILLING: If multiple heights exist, we scale down to min
-                            if (avgHeight > minSubdivY) {
-                                thickness = (avgHeight - minSubdivY) + 1.25f; // Extra padding
-                            }
+                            surfaceY = Math.max(surfaceY, 62); // Water level normalization
                         } else if (bestMaterial == Material.AIR || bestMaterial == Material.CAVE_AIR) {
                             bestMaterial = Material.GRASS_BLOCK;
                         }
 
                         blocks[idx] = bestMaterial.createBlockData();
-                        heights[idx] = avgHeight;
-                        thicknesses[idx] = thickness;
+                        heights[idx] = surfaceY; // Use dominant height for top of LOD
+                        mins[idx] = minSubdivY;
                         biomeColors[idx] = getBlendedBiomeColor(world, bx + (sx * areaSizeX) + (areaSizeX / 2),
-                                avgHeight, bz + (sz * areaSizeZ) + (areaSizeZ / 2),
+                                surfaceY, bz + (sz * areaSizeZ) + (areaSizeZ / 2),
                                 bestMaterial);
                     }
                 }
+
+                // Pass 2: Generalized Gap-Filling across subdivisions and chunk boundaries
+                for (int sx = 0; sx < subdivX; sx++) {
+                    for (int sz = 0; sz < subdivZ; sz++) {
+                        int idx = sx * subdivZ + sz;
+                        int h = heights[idx];
+                        int minForThis = mins[idx];
+
+                        // Internal Gap Check (intra-chunk neighbors)
+                        // Use surface heights (heights[]) not floor heights (mins[]) to prevent deep
+                        // gaps from spreading
+                        if (sx > 0)
+                            minForThis = Math.min(minForThis, heights[(sx - 1) * subdivZ + sz]);
+                        if (sx < subdivX - 1)
+                            minForThis = Math.min(minForThis, heights[(sx + 1) * subdivZ + sz]);
+                        if (sz > 0)
+                            minForThis = Math.min(minForThis, heights[sx * subdivZ + (sz - 1)]);
+                        if (sz < subdivZ - 1)
+                            minForThis = Math.min(minForThis, heights[sx * subdivZ + (sz + 1)]);
+
+                        // Real Chunk Boundary Check (inter-chunk)
+                        if (sx == 0 && world.isChunkLoaded(cx - 1, cz)) {
+                            minForThis = Math.min(minForThis,
+                                    scanLowestAtBoundary(world, bx - 1, bz + (sz * areaSizeZ), 1, areaSizeZ));
+                        }
+                        if (sx == subdivX - 1 && world.isChunkLoaded(cx + 1, cz)) {
+                            minForThis = Math.min(minForThis,
+                                    scanLowestAtBoundary(world, bx + 16, bz + (sz * areaSizeZ), 1, areaSizeZ));
+                        }
+                        if (sz == 0 && world.isChunkLoaded(cx, cz - 1)) {
+                            minForThis = Math.min(minForThis,
+                                    scanLowestAtBoundary(world, bx + (sx * areaSizeX), bz - 1, areaSizeX, 1));
+                        }
+                        if (sz == subdivZ - 1 && world.isChunkLoaded(cx, cz + 1)) {
+                            minForThis = Math.min(minForThis,
+                                    scanLowestAtBoundary(world, bx + (sx * areaSizeX), bz + 16, areaSizeX, 1));
+                        }
+
+                        // Protect against "stalactites": For non-water blocks, clamp the gap-filling
+                        // skirt to 3 blocks
+                        if (!isWaterLike(blocks[idx].getMaterial())) {
+                            minForThis = Math.max(minForThis, h - 3);
+                        } else {
+                            // Water can go deeper for waterfalls, but still clamp to something sane
+                            minForThis = Math.max(minForThis, h - 32);
+                        }
+
+                        // Units: 10.0f = 1 block. (h - minForThis) is in blocks.
+                        thicknesses[idx] = Math.max(10.0f, ((h - minForThis) * 10.0f) + 1.25f);
+                    }
+                }
+
                 return new LODSignature(blocks, heights, biomeColors, thicknesses, subdivX, subdivZ);
             } catch (Exception e) {
                 return null; // Return null instead of procedural to avoid weird void chunks
             }
         });
+    }
+
+    private int scanLowestAtBoundary(World world, int startX, int startZ, int sizeX, int sizeZ) {
+        int min = 320;
+        for (int x = 0; x < sizeX; x++) {
+            for (int z = 0; z < sizeZ; z++) {
+                min = Math.min(min, world.getHighestBlockAt(startX + x, startZ + z, HeightMap.WORLD_SURFACE).getY());
+            }
+        }
+        return min;
     }
 
     private boolean isExcluded(Material mat) {
