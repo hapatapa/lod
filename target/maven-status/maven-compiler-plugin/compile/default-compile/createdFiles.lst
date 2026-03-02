@@ -1,0 +1,15 @@
+com/hapatapa/lod/engine/LODManager$PendingScan.class
+com/hapatapa/lod/util/SettingsManager.class
+com/hapatapa/lod/engine/VirtualDisplayEntity.class
+com/hapatapa/lod/engine/LODDistance.class
+com/hapatapa/lod/engine/LODManager.class
+com/hapatapa/lod/data/LODSignature.class
+com/hapatapa/lod/engine/LODManager$1.class
+com/hapatapa/lod/LODCommand.class
+com/hapatapa/lod/LODPlugin.class
+com/hapatapa/lod/engine/PlayerSession.class
+com/hapatapa/lod/LODBootstrapper.class
+com/hapatapa/lod/ui/LODDialogManager.class
+com/hapatapa/lod/engine/LODManager$2.class
+com/hapatapa/lod/engine/LODQuality.class
+com/hapatapa/lod/io/AnvilScanner.class
