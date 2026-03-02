@@ -101,7 +101,7 @@ public class LODManager implements Listener {
 
     private void processScanQueue() {
         int processed = 0;
-        int maxPerTick = 30; // Throttled slightly to protect Chunk API
+        int maxPerTick = 120; // Throttled slightly to protect Chunk API (Increased from 30)
 
         boolean useGlobalCache = settingsManager.isCacheEnabled();
         boolean allowGeneration = settingsManager.isChunkGenerationEnabled();

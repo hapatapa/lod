@@ -52,9 +52,9 @@ public class PlayerSession {
             lastCZ = pCZ;
         }
 
-        processScanQueue(10);
-        processCleanupQueue(20);
-        processAnchorRefresh(15);
+        processScanQueue(40);
+        processCleanupQueue(80);
+        processAnchorRefresh(60);
     }
 
     private final List<Long> cleanupQueue = new ArrayList<>();
