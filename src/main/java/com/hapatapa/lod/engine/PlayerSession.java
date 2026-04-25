@@ -13,7 +13,8 @@ import java.util.*;
 public class PlayerSession {
 
     private static final boolean USE_TELEPORTATION = true; // Toggle for teleportation vs remove/respawn
-    private double cullingCosine = Math.cos(Math.toRadians(160.0 / 2.0));
+    private double cullingCosine = Math.cos(Math.toRadians(100.0 / 2.0)); // Narrower frustum (100 degrees) for better
+                                                                          // sensitivity
 
     private final Player player;
     private final LODManager manager;
@@ -177,6 +178,13 @@ public class PlayerSession {
                 boolean shouldShow = (nearestDistSq >= renderDistThresholdSq)
                         || !world.isChunkLoaded(pCX + dx, pCZ + dz);
 
+                // Occlusion Culling
+                if (shouldShow && chunkDistSq > 256) { // Only occlusion test chunks further than 16 blocks (was 32)
+                    if (isChunkOccluded(world, px, py + player.getEyeHeight(), pz, alignedCX, alignedCZ, ratio)) {
+                        shouldShow = false;
+                    }
+                }
+
                 if (shouldShow) {
                     long key = LODManager.getChunkKey(world, alignedCX, alignedCZ, ratio);
                     if (nextDesired.add(key) && !activeEntities.containsKey(key)) {
@@ -204,6 +212,117 @@ public class PlayerSession {
 
         // CRITICAL FIX: Do NOT clear anchorRefreshQueue or reset index here.
         // The queue is synced periodically in update() to maintain rotation.
+    }
+
+    /**
+     * @param targetCX The chunk X of the ultimate target LOD chunk (to skip
+     *                 self-occlusion).
+     * @param targetCZ The chunk Z of the ultimate target LOD chunk.
+     */
+    private boolean isPointOccluded(World world, double px, double py, double pz, double tx, double tz, double ty,
+            int targetCX, int targetCZ, int targetRatio) {
+        double dx = tx - px;
+        double dy = ty - py;
+        double dz = tz - pz;
+        double distSq = dx * dx + dz * dz;
+
+        if (distSq <= 256.0)
+            return false;
+
+        double dist = Math.sqrt(distSq);
+        int steps = (int) (dist / 2.0);
+        if (steps <= 0)
+            return false;
+
+        double stepX = dx / steps;
+        double stepY = dy / steps;
+        double stepZ = dz / steps;
+
+        // Precompute the world-space AABB of the target LOD chunk
+        double targetMinX = targetCX << 4;
+        double targetMaxX = targetMinX + (targetRatio * 16.0);
+        double targetMinZ = targetCZ << 4;
+        double targetMaxZ = targetMinZ + (targetRatio * 16.0);
+
+        for (int i = 1; i < steps; i++) {
+            double currX = px + stepX * i;
+            double currY = py + stepY * i;
+            double currZ = pz + stepZ * i;
+
+            // Skip if this raycast step is inside the target chunk — prevents
+            // self-occlusion
+            if (currX >= targetMinX && currX < targetMaxX && currZ >= targetMinZ && currZ < targetMaxZ)
+                continue;
+
+            int currCX = ((int) Math.floor(currX)) >> 4;
+            int currCZ = ((int) Math.floor(currZ)) >> 4;
+
+            LODSignature sig = manager.getSignatureAny(world, currCX, currCZ);
+            if (sig != null) {
+                int relX = ((int) Math.floor(currX)) - (sig.cx() << 4);
+                int relZ = ((int) Math.floor(currZ)) - (sig.cz() << 4);
+                int span = 16 * sig.ratio();
+                int sx = Math.max(0, Math.min(sig.subdivX() - 1, (relX * sig.subdivX()) / span));
+                int sz = Math.max(0, Math.min(sig.subdivZ() - 1, (relZ * sig.subdivZ()) / span));
+                int idx = (sx * sig.subdivZ()) + sz;
+
+                if (idx >= 0 && idx < sig.occlusionHeights().length) {
+                    if (currY < sig.occlusionHeights()[idx])
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isChunkOccluded(World world, double px, double py, double pz, int targetCX, int targetCZ,
+            int ratio) {
+        double chunkSize = ratio * 16.0;
+        double minX = (targetCX << 4) + 0.5;
+        double minZ = (targetCZ << 4) + 0.5;
+        double maxX = (targetCX << 4) + chunkSize - 0.5;
+        double maxZ = (targetCZ << 4) + chunkSize - 0.5;
+        double centerX = (minX + maxX) / 2.0;
+        double centerZ = (minZ + maxZ) / 2.0;
+
+        // 9-point sampling (Center + 4 Corners + 4 Mid-Edges)
+        double[][] points = {
+                { centerX, centerZ },
+                { minX, minZ }, { maxX, minZ }, { minX, maxZ }, { maxX, maxZ },
+                { centerX, minZ }, { centerX, maxZ }, { minX, centerZ }, { maxX, centerZ }
+        };
+
+        int sampled = 0;
+        int occluded = 0;
+
+        for (double[] pt : points) {
+            double tx = pt[0];
+            double tz = pt[1];
+
+            int cx = ((int) Math.floor(tx)) >> 4;
+            int cz = ((int) Math.floor(tz)) >> 4;
+            LODSignature sig = manager.getSignatureAny(world, cx, cz);
+
+            // If we don't have terrain data for this sample, skip it optimistically
+            if (sig == null)
+                continue;
+
+            int relX = ((int) Math.floor(tx)) - (sig.cx() << 4);
+            int relZ = ((int) Math.floor(tz)) - (sig.cz() << 4);
+            int span = 16 * sig.ratio();
+            int sx = Math.max(0, Math.min(sig.subdivX() - 1, (relX * sig.subdivX()) / span));
+            int sz = Math.max(0, Math.min(sig.subdivZ() - 1, (relZ * sig.subdivZ()) / span));
+            int idx = (sx * sig.subdivZ()) + sz;
+
+            int h = sig.occlusionHeights()[idx];
+            sampled++;
+
+            if (isPointOccluded(world, px, py, pz, tx, tz, h, targetCX, targetCZ, ratio))
+                occluded++;
+        }
+
+        // Need at least 1 sample, and all sampled points must be occluded
+        return sampled > 0 && occluded == sampled;
     }
 
     private void processCleanupQueue(int max) {
@@ -247,7 +366,7 @@ public class PlayerSession {
                 spawnLOD(key, cx, cz, ratio, sig);
                 processed++;
             } else {
-                manager.requestScan(world, cx, cz, quality.getSubdivX(), quality.getSubdivZ());
+                manager.requestScan(world, cx, cz, quality.getSubdivX(), quality.getSubdivZ(), ratio);
             }
         }
         return processed;

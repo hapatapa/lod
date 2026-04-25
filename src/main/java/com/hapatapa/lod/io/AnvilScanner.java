@@ -9,14 +9,15 @@ import org.bukkit.block.data.BlockData;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 public class AnvilScanner {
 
-    public CompletableFuture<LODSignature> scanChunk(World world, int cx, int cz, int subdivX, int subdivZ,
-            boolean allowGeneration) {
+    public CompletableFuture<LODSignature> scanChunk(World world, int cx, int cz, int subdivX, int subdivZ, int ratio,
+            boolean allowGeneration, Set<Material> ignoredBlocks) {
         if (Math.abs(cx) > 1875000 || Math.abs(cz) > 1875000) {
-            return CompletableFuture.completedFuture(generateProcedural(cx, cz, subdivX, subdivZ));
+            return CompletableFuture.completedFuture(generateProcedural(cx, cz, subdivX, subdivZ, ratio));
         }
 
         return world.getChunkAtAsync(cx, cz, allowGeneration).thenApply(chunk -> {
@@ -45,12 +46,14 @@ public class AnvilScanner {
                 int bx = cx << 4;
                 int bz = cz << 4;
 
-                int areaSizeX = 16 / subdivX;
-                int areaSizeZ = 16 / subdivZ;
+                int span = 16 * ratio;
+                int areaSizeX = span / subdivX;
+                int areaSizeZ = span / subdivZ;
                 int totalBlocks = subdivX * subdivZ;
 
                 BlockData[] blocks = new BlockData[totalBlocks];
                 int[] heights = new int[totalBlocks];
+                int[] occlusionHeights = new int[totalBlocks];
                 int[] biomeColors = new int[totalBlocks];
                 float[] thicknesses = new float[totalBlocks];
                 int[] mins = new int[totalBlocks];
@@ -59,8 +62,10 @@ public class AnvilScanner {
                 for (int sx = 0; sx < subdivX; sx++) {
                     for (int sz = 0; sz < subdivZ; sz++) {
                         double totalHeight = 0;
+                        double totalOcclusionHeight = 0;
                         Map<Material, Integer> materialCounts = new HashMap<>();
                         Map<Integer, Integer> heightCounts = new HashMap<>();
+                        Map<Integer, Integer> occlusionHeightCounts = new HashMap<>();
                         int samples = 0;
                         int minSubdivY = 320;
 
@@ -69,7 +74,11 @@ public class AnvilScanner {
                             for (int dz = 0; dz < areaSizeZ; dz++) {
                                 int x = sx * areaSizeX + dx;
                                 int z = sz * areaSizeZ + dz;
-                                Block b = world.getHighestBlockAt(bx + x, bz + z, HeightMap.WORLD_SURFACE);
+
+                                int startY = world.getHighestBlockYAt(bx + x, bz + z, HeightMap.WORLD_SURFACE);
+                                Block b = world.getBlockAt(bx + x, startY, bz + z);
+
+                                // Visual height is the standard highest block
                                 int hy = b.getY();
                                 totalHeight += hy;
                                 minSubdivY = Math.min(minSubdivY, hy);
@@ -79,21 +88,48 @@ public class AnvilScanner {
                                 if (!isExcluded(m)) {
                                     materialCounts.merge(m, 1, Integer::sum);
                                 }
+
+                                // Occlusion height steps down if the block is on the ignore list
+                                int occY = startY;
+                                Block occB = b;
+                                // If water is ignored, we also ignore water-like foliage (kelp, seagrass) to
+                                // prevent culling by thin plants
+                                boolean waterIgnored = ignoredBlocks.contains(Material.WATER);
+
+                                while (occY > world.getMinHeight()) {
+                                    Material type = occB.getType();
+                                    if (isExcluded(type) || ignoredBlocks.contains(type)
+                                            || (waterIgnored && isWaterLike(type))) {
+                                        occY--;
+                                        occB = world.getBlockAt(bx + x, occY, bz + z);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                totalOcclusionHeight += occY;
+                                occlusionHeightCounts.merge(occY, 1, Integer::sum);
+
                                 samples++;
                             }
                         }
-
                         int avgHeight = (int) Math.round(totalHeight / samples);
                         int surfaceY = heightCounts.entrySet().stream()
                                 .max(Map.Entry.comparingByValue())
                                 .map(Map.Entry::getKey)
                                 .orElse(avgHeight);
 
+                        int avgOcclusionHeight = (int) Math.round(totalOcclusionHeight / samples);
+                        int occlusionY = occlusionHeightCounts.entrySet().stream()
+                                .max(Map.Entry.comparingByValue())
+                                .map(Map.Entry::getKey)
+                                .orElse(avgOcclusionHeight);
+
                         int idx = sx * subdivZ + sz;
 
                         if (avgHeight <= world.getMinHeight() + 5) {
                             blocks[idx] = getProceduralMaterial(cx, cz, avgHeight).createBlockData();
                             heights[idx] = avgHeight;
+                            occlusionHeights[idx] = avgHeight;
                             mins[idx] = avgHeight;
                             biomeColors[idx] = 0x3F76E4;
                             continue;
@@ -114,6 +150,7 @@ public class AnvilScanner {
 
                         blocks[idx] = bestMaterial.createBlockData();
                         heights[idx] = surfaceY; // Use dominant height for top of LOD
+                        occlusionHeights[idx] = occlusionY; // Use lowered height for culling
                         mins[idx] = minSubdivY;
                         biomeColors[idx] = getBlendedBiomeColor(world, bx + (sx * areaSizeX) + (areaSizeX / 2),
                                 surfaceY, bz + (sz * areaSizeZ) + (areaSizeZ / 2),
@@ -145,17 +182,17 @@ public class AnvilScanner {
                             minForThis = Math.min(minForThis,
                                     scanLowestAtBoundary(world, bx - 1, bz + (sz * areaSizeZ), 1, areaSizeZ));
                         }
-                        if (sx == subdivX - 1 && world.isChunkLoaded(cx + 1, cz)) {
+                        if (sx == subdivX - 1 && world.isChunkLoaded(cx + ratio, cz)) {
                             minForThis = Math.min(minForThis,
-                                    scanLowestAtBoundary(world, bx + 16, bz + (sz * areaSizeZ), 1, areaSizeZ));
+                                    scanLowestAtBoundary(world, bx + span, bz + (sz * areaSizeZ), 1, areaSizeZ));
                         }
                         if (sz == 0 && world.isChunkLoaded(cx, cz - 1)) {
                             minForThis = Math.min(minForThis,
                                     scanLowestAtBoundary(world, bx + (sx * areaSizeX), bz - 1, areaSizeX, 1));
                         }
-                        if (sz == subdivZ - 1 && world.isChunkLoaded(cx, cz + 1)) {
+                        if (sz == subdivZ - 1 && world.isChunkLoaded(cx, cz + ratio)) {
                             minForThis = Math.min(minForThis,
-                                    scanLowestAtBoundary(world, bx + (sx * areaSizeX), bz + 16, areaSizeX, 1));
+                                    scanLowestAtBoundary(world, bx + (sx * areaSizeX), bz + span, areaSizeX, 1));
                         }
 
                         // Protect against "stalactites": For non-water blocks, clamp the gap-filling
@@ -172,7 +209,8 @@ public class AnvilScanner {
                     }
                 }
 
-                return new LODSignature(blocks, heights, biomeColors, thicknesses, subdivX, subdivZ);
+                return new LODSignature(blocks, heights, occlusionHeights, biomeColors, thicknesses, subdivX, subdivZ,
+                        ratio, cx, cz);
             } catch (Exception e) {
                 return null; // Return null instead of procedural to avoid weird void chunks
             }
@@ -203,21 +241,23 @@ public class AnvilScanner {
                 mat == Material.KELP || mat == Material.KELP_PLANT || mat == Material.BUBBLE_COLUMN;
     }
 
-    private LODSignature generateProcedural(int cx, int cz, int subdivX, int subdivZ) {
+    private LODSignature generateProcedural(int cx, int cz, int subdivX, int subdivZ, int ratio) {
         int totalBlocks = subdivX * subdivZ;
         BlockData[] blocks = new BlockData[totalBlocks];
         int[] heights = new int[totalBlocks];
+        int[] occlusionHeights = new int[totalBlocks];
         int[] biomeColors = new int[totalBlocks];
         float[] thicknesses = new float[totalBlocks];
 
-        int areaSizeX = 16 / subdivX;
-        int areaSizeZ = 16 / subdivZ;
+        int span = 16 * ratio;
+        int areaSizeX = span / subdivX;
+        int areaSizeZ = span / subdivZ;
 
         for (int sx = 0; sx < subdivX; sx++) {
             for (int sz = 0; sz < subdivZ; sz++) {
                 // Procedural generation uses the center of each subdivision for noise
-                double px = cx * 16 + (sx * areaSizeX) + (16.0);
-                double pz = cz * 16 + (sz * areaSizeZ) + (16.0);
+                double px = cx * 16 + (sx * areaSizeX) + (span / 2.0);
+                double pz = cz * 16 + (sz * areaSizeZ) + (span / 2.0);
 
                 double noise = Math.sin(px * 0.05) * Math.cos(pz * 0.05);
                 int y = 63 + (int) (noise * 5);
@@ -225,12 +265,14 @@ public class AnvilScanner {
                 int idx = sx * subdivZ + sz;
                 blocks[idx] = getProceduralMaterial(cx, cz, y).createBlockData();
                 heights[idx] = y;
+                occlusionHeights[idx] = y;
                 thicknesses[idx] = 10.0f;
                 biomeColors[idx] = (y > 62) ? 0x79C05A : 0x3F76E4;
             }
         }
 
-        return new LODSignature(blocks, heights, biomeColors, thicknesses, subdivX, subdivZ);
+        return new LODSignature(blocks, heights, occlusionHeights, biomeColors, thicknesses, subdivX, subdivZ, ratio,
+                cx, cz);
     }
 
     private int getBlendedBiomeColor(World world, int x, int y, int z, Material mat) {

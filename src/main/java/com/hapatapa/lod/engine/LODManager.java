@@ -53,7 +53,7 @@ public class LODManager implements Listener {
     private final Queue<PendingScan> scanQueue = new ConcurrentLinkedQueue<>();
     private final Set<Long> pendingScans = ConcurrentHashMap.newKeySet();
 
-    private record PendingScan(World world, int cx, int cz, int subdivX, int subdivZ, long key) {
+    private record PendingScan(World world, int cx, int cz, int subdivX, int subdivZ, int ratio, long key) {
     }
 
     public LODManager(LODPlugin plugin) {
@@ -111,7 +111,9 @@ public class LODManager implements Listener {
             if (pending == null)
                 continue;
 
-            scanner.scanChunk(pending.world, pending.cx, pending.cz, pending.subdivX, pending.subdivZ, allowGeneration)
+            scanner.scanChunk(pending.world(), pending.cx(), pending.cz(), pending.subdivX(), pending.subdivZ(),
+                    pending.ratio(),
+                    allowGeneration, settingsManager.getIgnoredBlocks())
                     .thenAccept(sig -> {
                         if (sig != null) {
                             synchronized (cacheLock) {
@@ -128,7 +130,7 @@ public class LODManager implements Listener {
         }
     }
 
-    public void requestScan(World world, int cx, int cz, int subdivX, int subdivZ) {
+    public void requestScan(World world, int cx, int cz, int subdivX, int subdivZ, int ratio) {
         if (!settingsManager.isChunkGenerationEnabled()) {
             if (!world.isChunkGenerated(cx, cz)) {
                 return;
@@ -144,7 +146,7 @@ public class LODManager implements Listener {
         }
 
         if (pendingScans.add(key)) {
-            scanQueue.add(new PendingScan(world, cx, cz, subdivX, subdivZ, key));
+            scanQueue.add(new PendingScan(world, cx, cz, subdivX, subdivZ, ratio, key));
         }
     }
 
@@ -181,6 +183,39 @@ public class LODManager implements Listener {
 
             if (settingsManager.isCacheEnabled()) {
                 return staticLODCache.get(key);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Retrieves any available signature for the given coordinates, regardless of
+     * subdivision level or ratio.
+     * This method is alignment-aware, meaning it will check for signatures that
+     * might span across multiple chunks (e.g., ratio 2 or 4).
+     */
+    public LODSignature getSignatureAny(World world, int cx, int cz) {
+        synchronized (cacheLock) {
+            // Check possible ratios from smallest (most detailed) to largest
+            int[] ratios = { 1, 2, 4 };
+            int[] metas = { 1, 2, 3, 4 };
+
+            for (int r : ratios) {
+                int shift = r >> 1; // 1->0, 2->1, 4->2
+                int acX = (cx >> shift) << shift;
+                int acZ = (cz >> shift) << shift;
+
+                for (int m : metas) {
+                    long key = getChunkKey(world, acX, acZ, m);
+                    LODSignature sig = transientCache.get(key);
+                    if (sig != null)
+                        return sig;
+                    if (settingsManager.isCacheEnabled()) {
+                        sig = staticLODCache.get(key);
+                        if (sig != null)
+                            return sig;
+                    }
+                }
             }
         }
         return null;

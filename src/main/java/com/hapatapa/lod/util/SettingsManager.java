@@ -5,6 +5,10 @@ import com.hapatapa.lod.engine.LODDistance;
 import com.hapatapa.lod.engine.LODQuality;
 import org.bukkit.configuration.file.FileConfiguration;
 
+import org.bukkit.Material;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public class SettingsManager {
@@ -12,6 +16,7 @@ public class SettingsManager {
     private final LODPlugin plugin;
     private boolean chunkGenerationEnabled = true;
     private boolean cacheEnabled = true;
+    private Set<Material> ignoredBlocks = new HashSet<>();
 
     public SettingsManager(LODPlugin plugin) {
         this.plugin = plugin;
@@ -24,6 +29,16 @@ public class SettingsManager {
 
         this.chunkGenerationEnabled = config.getBoolean("admin.chunk-generation-enabled", true);
         this.cacheEnabled = config.getBoolean("admin.cache-enabled", true);
+
+        this.ignoredBlocks.clear();
+        List<String> ignoredList = config.getStringList("admin.ignored-blocks");
+        for (String matName : ignoredList) {
+            try {
+                this.ignoredBlocks.add(Material.valueOf(matName.toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                plugin.getLogger().warning("Invalid ignored block material in config: " + matName);
+            }
+        }
     }
 
     public void saveGlobal() {
@@ -84,5 +99,9 @@ public class SettingsManager {
     public void setCacheEnabled(boolean cacheEnabled) {
         this.cacheEnabled = cacheEnabled;
         saveGlobal();
+    }
+
+    public Set<Material> getIgnoredBlocks() {
+        return ignoredBlocks;
     }
 }

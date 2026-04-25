@@ -5,6 +5,61 @@ admin:
   chunk-generation-enabled: true
   # Whether to use the internal scan cache
   cache-enabled: true
+  # List of blocks to completely ignore when generating LOD heightmaps (for culling and visuals)
+  ignored-blocks:
+    # Leaves
+    - OAK_LEAVES
+    - BIRCH_LEAVES
+    - SPRUCE_LEAVES
+    - JUNGLE_LEAVES
+    - ACACIA_LEAVES
+    - DARK_OAK_LEAVES
+    - AZALEA_LEAVES
+    - FLOWERING_AZALEA_LEAVES
+    - MANGROVE_LEAVES
+    - CHERRY_LEAVES
+    - PALE_OAK_LEAVES
+    # Logs and Stems
+    - OAK_LOG
+    - BIRCH_LOG
+    - SPRUCE_LOG
+    - JUNGLE_LOG
+    - ACACIA_LOG
+    - DARK_OAK_LOG
+    - MANGROVE_LOG
+    - CHERRY_LOG
+    - PALE_OAK_LOG
+    - CRIMSON_STEM
+    - WARPED_STEM
+    - STRIPPED_OAK_LOG
+    - STRIPPED_BIRCH_LOG
+    - STRIPPED_SPRUCE_LOG
+    - STRIPPED_JUNGLE_LOG
+    - STRIPPED_ACACIA_LOG
+    - STRIPPED_DARK_OAK_LOG
+    - STRIPPED_MANGROVE_LOG
+    - STRIPPED_CHERRY_LOG
+    - STRIPPED_PALE_OAK_LOG
+    - STRIPPED_CRIMSON_STEM
+    - STRIPPED_WARPED_STEM
+    # Wood and Hyphae
+    - OAK_WOOD
+    - BIRCH_WOOD
+    - SPRUCE_WOOD
+    - JUNGLE_WOOD
+    - ACACIA_WOOD
+    - DARK_OAK_WOOD
+    - MANGROVE_WOOD
+    - CHERRY_WOOD
+    - PALE_OAK_WOOD
+    - CRIMSON_HYPHAE
+    - WARPED_HYPHAE
+    # Technical/Transparent
+    - GLASS
+    - TINTED_GLASS
+    - BARRIER
+    - STRUCTURE_VOID
+    - LIGHT
 
 # Player preferences (automatically managed)
 players:
