@@ -48,12 +48,13 @@ public class SettingsManager {
         plugin.saveConfig();
     }
 
-    public void savePlayerSettings(UUID uuid, LODDistance distance, LODQuality quality, float fov) {
+    public void savePlayerSettings(UUID uuid, LODDistance distance, LODQuality quality, float fov, boolean waterDepthEnabled) {
         FileConfiguration config = plugin.getConfig();
         String path = "players." + uuid.toString();
         config.set(path + ".distance", distance.name());
         config.set(path + ".quality", quality.name());
         config.set(path + ".fov", fov);
+        config.set(path + ".water-depth", waterDepthEnabled);
         plugin.saveConfig();
     }
 
@@ -81,6 +82,10 @@ public class SettingsManager {
 
     public float getPlayerFOV(UUID uuid) {
         return (float) plugin.getConfig().getDouble("players." + uuid.toString() + ".fov", 70.0);
+    }
+
+    public boolean isPlayerWaterDepthEnabled(UUID uuid) {
+        return plugin.getConfig().getBoolean("players." + uuid.toString() + ".water-depth", true);
     }
 
     public boolean isChunkGenerationEnabled() {

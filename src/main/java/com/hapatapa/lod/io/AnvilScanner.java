@@ -57,6 +57,9 @@ public class AnvilScanner {
                 int[] biomeColors = new int[totalBlocks];
                 float[] thicknesses = new float[totalBlocks];
                 int[] mins = new int[totalBlocks];
+                BlockData[] bottomBlocks = new BlockData[totalBlocks];
+                int[] bottomHeights = new int[totalBlocks];
+                int[] bottomBiomeColors = new int[totalBlocks];
 
                 // Pass 1: Gather raw data and determine surface blocks/heights
                 for (int sx = 0; sx < subdivX; sx++) {
@@ -66,6 +69,8 @@ public class AnvilScanner {
                         Map<Material, Integer> materialCounts = new HashMap<>();
                         Map<Integer, Integer> heightCounts = new HashMap<>();
                         Map<Integer, Integer> occlusionHeightCounts = new HashMap<>();
+                        Map<Material, Integer> bottomMaterialCounts = new HashMap<>();
+                        Map<Integer, Integer> bottomHeightCounts = new HashMap<>();
                         int samples = 0;
                         int minSubdivY = 320;
 
@@ -87,6 +92,22 @@ public class AnvilScanner {
                                 Material m = b.getType();
                                 if (!isExcluded(m)) {
                                     materialCounts.merge(m, 1, Integer::sum);
+                                }
+
+                                if (isWaterLike(m)) {
+                                    int botY = startY;
+                                    Block botB = b;
+                                    while (botY > world.getMinHeight()) {
+                                        Material botM = botB.getType();
+                                        if (isWaterLike(botM) || isExcluded(botM)) {
+                                            botY--;
+                                            botB = world.getBlockAt(bx + x, botY, bz + z);
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    bottomMaterialCounts.merge(botB.getType(), 1, Integer::sum);
+                                    bottomHeightCounts.merge(botY, 1, Integer::sum);
                                 }
 
                                 // Occlusion height steps down if the block is on the ignore list
@@ -144,6 +165,31 @@ public class AnvilScanner {
                         if (isWaterLike(bestMaterial)) {
                             bestMaterial = Material.WATER;
                             surfaceY = Math.max(surfaceY, 62); // Water level normalization
+                            
+                            if (!bottomMaterialCounts.isEmpty()) {
+                                Material bestBottomMaterial = bottomMaterialCounts.entrySet().stream()
+                                        .max(Map.Entry.comparingByValue())
+                                        .map(Map.Entry::getKey)
+                                        .orElse(Material.SAND);
+
+                                int bestBottomHeight = bottomHeightCounts.entrySet().stream()
+                                        .max(Map.Entry.comparingByValue())
+                                        .map(Map.Entry::getKey)
+                                        .orElse(surfaceY - 1);
+                                        
+                                if (bestBottomMaterial == Material.AIR || bestBottomMaterial == Material.CAVE_AIR) {
+                                    bestBottomMaterial = Material.SAND;
+                                }
+
+                                BlockData bottomData = bestBottomMaterial.createBlockData();
+                                if (bottomData instanceof org.bukkit.block.data.Waterlogged waterlogged) {
+                                    waterlogged.setWaterlogged(false);
+                                }
+                                bottomBlocks[idx] = bottomData;
+                                bottomHeights[idx] = bestBottomHeight;
+                                bottomBiomeColors[idx] = getBlendedBiomeColor(world, bx + (sx * areaSizeX) + (areaSizeX / 2),
+                                        bestBottomHeight, bz + (sz * areaSizeZ) + (areaSizeZ / 2), bestBottomMaterial);
+                            }
                         } else if (bestMaterial == Material.AIR || bestMaterial == Material.CAVE_AIR) {
                             bestMaterial = Material.GRASS_BLOCK;
                         }
@@ -196,9 +242,9 @@ public class AnvilScanner {
                         }
 
                         // Protect against "stalactites": For non-water blocks, clamp the gap-filling
-                        // skirt to 3 blocks
+                        // skirt to 12 blocks
                         if (!isWaterLike(blocks[idx].getMaterial())) {
-                            minForThis = Math.max(minForThis, h - 3);
+                            minForThis = Math.max(minForThis, h - 12);
                         } else {
                             // Water can go deeper for waterfalls, but still clamp to something sane
                             minForThis = Math.max(minForThis, h - 32);
@@ -209,7 +255,7 @@ public class AnvilScanner {
                     }
                 }
 
-                return new LODSignature(blocks, heights, occlusionHeights, biomeColors, thicknesses, subdivX, subdivZ,
+                return new LODSignature(blocks, bottomBlocks, heights, bottomHeights, occlusionHeights, biomeColors, bottomBiomeColors, thicknesses, subdivX, subdivZ,
                         ratio, cx, cz);
             } catch (Exception e) {
                 return null; // Return null instead of procedural to avoid weird void chunks
@@ -244,9 +290,12 @@ public class AnvilScanner {
     private LODSignature generateProcedural(int cx, int cz, int subdivX, int subdivZ, int ratio) {
         int totalBlocks = subdivX * subdivZ;
         BlockData[] blocks = new BlockData[totalBlocks];
+        BlockData[] bottomBlocks = new BlockData[totalBlocks];
         int[] heights = new int[totalBlocks];
+        int[] bottomHeights = new int[totalBlocks];
         int[] occlusionHeights = new int[totalBlocks];
         int[] biomeColors = new int[totalBlocks];
+        int[] bottomBiomeColors = new int[totalBlocks];
         float[] thicknesses = new float[totalBlocks];
 
         int span = 16 * ratio;
@@ -271,7 +320,7 @@ public class AnvilScanner {
             }
         }
 
-        return new LODSignature(blocks, heights, occlusionHeights, biomeColors, thicknesses, subdivX, subdivZ, ratio,
+        return new LODSignature(blocks, bottomBlocks, heights, bottomHeights, occlusionHeights, biomeColors, bottomBiomeColors, thicknesses, subdivX, subdivZ, ratio,
                 cx, cz);
     }
 

@@ -159,6 +159,7 @@ public class LODManager implements Listener {
         session.setDistance(settingsManager.getPlayerDistance(player.getUniqueId()));
         session.setQuality(settingsManager.getPlayerQuality(player.getUniqueId()));
         session.setFov(settingsManager.getPlayerFOV(player.getUniqueId()));
+        session.setWaterDepthEnabled(settingsManager.isPlayerWaterDepthEnabled(player.getUniqueId()));
 
         activeSessions.put(player.getUniqueId(), session);
     }
@@ -169,7 +170,7 @@ public class LODManager implements Listener {
         PlayerSession session = activeSessions.remove(player.getUniqueId());
         if (session != null) {
             settingsManager.savePlayerSettings(player.getUniqueId(), session.getDistance(), session.getQuality(),
-                    session.getFov());
+                    session.getFov(), session.isWaterDepthEnabled());
             session.clear();
         }
     }

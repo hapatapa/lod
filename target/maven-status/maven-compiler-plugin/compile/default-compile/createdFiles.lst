@@ -11,5 +11,5 @@ com/hapatapa/lod/engine/PlayerSession.class
 com/hapatapa/lod/LODBootstrapper.class
 com/hapatapa/lod/ui/LODDialogManager.class
 com/hapatapa/lod/engine/LODManager$2.class
-com/hapatapa/lod/engine/LODQuality.class
 com/hapatapa/lod/io/AnvilScanner.class
+com/hapatapa/lod/engine/LODQuality.class

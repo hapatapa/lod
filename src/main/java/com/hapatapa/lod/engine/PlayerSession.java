@@ -21,6 +21,7 @@ public class PlayerSession {
     private LODDistance distance = LODDistance.HIGH_FIDELITY;
     private LODQuality quality = LODQuality.LOW;
     private float fov = 70.0f;
+    private boolean waterDepthEnabled = true;
 
     private final Map<Long, VirtualDisplayEntity[]> activeEntities = new HashMap<>();
     private final Map<Long, Location[]> entityAnchors = new HashMap<>();
@@ -407,27 +408,31 @@ public class PlayerSession {
                 if (sig == null)
                     continue;
 
-                for (int idx = 0; idx < entities.length; idx++) {
-                    VirtualDisplayEntity entity = entities[idx];
+                for (int entityIdx = 0; entityIdx < entities.length; entityIdx++) {
+                    VirtualDisplayEntity entity = entities[entityIdx];
                     if (entity == null)
                         continue;
 
+                    int idx = entityIdx % (subdivX * subdivZ);
                     int sx = idx / subdivZ;
                     int sz = idx % subdivZ;
-                    int h = heights[idx];
+                    int h = heights[entityIdx];
                     Location newAnchor = calculateAnchor(pLoc, LODManager.unpackX(key), LODManager.unpackZ(key), h);
 
-                    float thickness = (idx < sig.thicknesses().length) ? sig.thicknesses()[idx] : 10.0f;
+                    float thickness = 10.0f;
+                    if (entityIdx < (subdivX * subdivZ)) {
+                        thickness = (idx < sig.thicknesses().length) ? sig.thicknesses()[idx] : 10.0f;
+                    }
                     updateMatrix(entity, key, newAnchor, ratio, sx, sz, subdivX, subdivZ, h, thickness);
 
                     if (USE_TELEPORTATION) {
                         entity.teleport(player, newAnchor);
-                        anchors[idx] = newAnchor;
+                        anchors[entityIdx] = newAnchor;
                         entity.updateMetadata(player);
                     } else {
                         entity.remove(player);
                         entity.setLocation(newAnchor);
-                        anchors[idx] = newAnchor;
+                        anchors[entityIdx] = newAnchor;
                         entity.spawn(player);
                         entity.updateMetadata(player);
                     }
@@ -444,9 +449,9 @@ public class PlayerSession {
         int subdivZ = sig.subdivZ();
         int totalEntities = subdivX * subdivZ;
 
-        VirtualDisplayEntity[] entities = new VirtualDisplayEntity[totalEntities];
-        Location[] anchors = new Location[totalEntities];
-        int[] heights = new int[totalEntities];
+        VirtualDisplayEntity[] entities = new VirtualDisplayEntity[totalEntities * 2];
+        Location[] anchors = new Location[totalEntities * 2];
+        int[] heights = new int[totalEntities * 2];
 
         for (int sx = 0; sx < subdivX; sx++) {
             for (int sz = 0; sz < subdivZ; sz++) {
@@ -470,6 +475,28 @@ public class PlayerSession {
                 updateMatrix(entity, key, anchor, ratio, sx, sz, subdivX, subdivZ, y, thickness);
                 entity.spawn(player);
                 entity.updateMetadata(player);
+
+                if (waterDepthEnabled && sig.bottomBlockData() != null && sig.bottomBlockData()[idx] != null) {
+                    int bIdx = idx + totalEntities;
+                    int bY = sig.bottomHeights()[idx];
+                    Location bAnchor = calculateAnchor(pLoc, cx, cz, bY);
+
+                    VirtualDisplayEntity bEntity = entityPool.poll();
+                    if (bEntity == null) {
+                        bEntity = new VirtualDisplayEntity(bAnchor.clone(), sig.bottomBlockData()[idx], sig.bottomBiomeColors()[idx]);
+                    } else {
+                        bEntity.setBlockData(sig.bottomBlockData()[idx], sig.bottomBiomeColors()[idx], 10.0f);
+                        bEntity.setLocation(bAnchor.clone());
+                    }
+
+                    entities[bIdx] = bEntity;
+                    anchors[bIdx] = bAnchor;
+                    heights[bIdx] = bY;
+
+                    updateMatrix(bEntity, key, bAnchor, ratio, sx, sz, subdivX, subdivZ, bY, 10.0f);
+                    bEntity.spawn(player);
+                    bEntity.updateMetadata(player);
+                }
             }
         }
 
@@ -573,5 +600,14 @@ public class PlayerSession {
 
     public LODQuality getQuality() {
         return quality;
+    }
+
+    public boolean isWaterDepthEnabled() {
+        return waterDepthEnabled;
+    }
+
+    public void setWaterDepthEnabled(boolean waterDepthEnabled) {
+        this.waterDepthEnabled = waterDepthEnabled;
+        clear();
     }
 }

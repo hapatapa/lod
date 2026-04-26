@@ -60,34 +60,37 @@ public class LODBootstrapper implements PluginBootstrap {
                                                                                                                         .step(1f)
                                                                                                                         .initial(80f)
                                                                                                                         .width(300)
-                                                                                                                        .build()))
+                                                                                                                        .build(),
+                                                                                                        io.papermc.paper.registry.data.dialog.input.DialogInput.singleOption(
+                                                                                                                        "water_depth",
+                                                                                                                        Component.text("Water Depth", NamedTextColor.AQUA),
+                                                                                                                        List.of(
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("true", Component.text("ON", NamedTextColor.GREEN), true),
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("false", Component.text("OFF", NamedTextColor.RED), false)
+                                                                                                                        )
+                                                                                                        ).build(),
+                                                                                                        io.papermc.paper.registry.data.dialog.input.DialogInput.singleOption(
+                                                                                                                        "distance",
+                                                                                                                        Component.text("LOD Distance", NamedTextColor.YELLOW),
+                                                                                                                        List.of(
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("HIGH_FIDELITY", Component.text("High Fidelity", NamedTextColor.GREEN), true),
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("BALANCED", Component.text("Balanced", NamedTextColor.YELLOW), false),
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("PERFORMANCE", Component.text("Performance", NamedTextColor.RED), false)
+                                                                                                                        )
+                                                                                                        ).build(),
+                                                                                                        io.papermc.paper.registry.data.dialog.input.DialogInput.singleOption(
+                                                                                                                        "quality",
+                                                                                                                        Component.text("LOD Quality", NamedTextColor.GOLD),
+                                                                                                                        List.of(
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("EXTREME", Component.text("Extreme", NamedTextColor.DARK_RED), false),
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("MEDIUM", Component.text("Medium", NamedTextColor.YELLOW), false),
+                                                                                                                                        io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput.OptionEntry.create("LOW", Component.text("Low", NamedTextColor.GREEN), true)
+                                                                                                                        )
+                                                                                                        ).build()
+                                                                                        ))
                                                                                         .build())
                                                                         .type(DialogType.multiAction(List.of(
-                                                                                        createFovButton(),
-                                                                                        createDistanceButton(
-                                                                                                        "Distance: High",
-                                                                                                        LODDistance.HIGH_FIDELITY,
-                                                                                                        NamedTextColor.GREEN),
-                                                                                        createDistanceButton(
-                                                                                                        "Distance: Balanced",
-                                                                                                        LODDistance.BALANCED,
-                                                                                                        NamedTextColor.YELLOW),
-                                                                                        createDistanceButton(
-                                                                                                        "Distance: Perf",
-                                                                                                        LODDistance.PERFORMANCE,
-                                                                                                        NamedTextColor.RED),
-                                                                                        createQualityButton(
-                                                                                                        "Quality: Extreme",
-                                                                                                        LODQuality.EXTREME,
-                                                                                                        NamedTextColor.DARK_RED),
-                                                                                        createQualityButton(
-                                                                                                        "Quality: Medium",
-                                                                                                        LODQuality.MEDIUM,
-                                                                                                        NamedTextColor.YELLOW),
-                                                                                        createQualityButton(
-                                                                                                        "Quality: Low",
-                                                                                                        LODQuality.LOW,
-                                                                                                        NamedTextColor.RED),
+                                                                                        createSaveButton(),
 
                                                                                         ActionButton.builder(Component
                                                                                                         .text("Clear Cache",
@@ -190,69 +193,59 @@ public class LODBootstrapper implements PluginBootstrap {
                                 }));
         }
 
-        private ActionButton createDistanceButton(String label, LODDistance distance, NamedTextColor color) {
-                return ActionButton.builder(Component.text(label, color))
+        private ActionButton createSaveButton() {
+                return ActionButton.builder(Component.text("Save Inputs & Apply", NamedTextColor.AQUA))
                                 .action(DialogAction.customClick((view, audience) -> {
                                         if (audience instanceof Player p) {
                                                 LODPlugin plugin = LODPlugin.getInstance();
                                                 if (plugin != null && plugin.getLodManager() != null) {
-                                                        plugin.getLodManager().getSession(p).setDistance(distance);
-                                                        p.sendMessage(Component
-                                                                        .text("LOD Distance set to: ",
-                                                                                        NamedTextColor.GRAY)
-                                                                        .append(Component.text(distance.name(),
-                                                                                        color)));
-                                                }
-                                        }
-                                }, ClickCallback.Options.builder().uses(100).build()))
-                                .build();
-        }
-
-        private ActionButton createQualityButton(String label, LODQuality quality, NamedTextColor color) {
-                if (quality == LODQuality.EXTREME) {
-                        return ActionButton.builder(Component.text(label, color))
-                                        .action(DialogAction.customClick((view, audience) -> {
-                                                if (audience instanceof Player p) {
-                                                        io.papermc.paper.dialog.Dialog confirmMenu = io.papermc.paper.registry.RegistryAccess
-                                                                        .registryAccess()
-                                                                        .getRegistry(io.papermc.paper.registry.RegistryKey.DIALOG)
-                                                                        .get(Key.key("lod:quality_extreme_confirm"));
-                                                        if (confirmMenu != null) {
-                                                                p.showDialog(confirmMenu);
+                                                        Float val = view.getFloat("fov");
+                                                        if (val != null) {
+                                                                plugin.getLodManager().getSession(p).setFov(val);
+                                                                p.sendMessage(Component.text(
+                                                                                "FOV set to " + val.intValue() + " (Culling at "
+                                                                                                + (val.intValue() + 20) + "°)",
+                                                                                NamedTextColor.GREEN));
                                                         }
-                                                }
-                                        }, ClickCallback.Options.builder().uses(100).build()))
-                                        .build();
-                }
-
-                return ActionButton.builder(Component.text(label, color))
-                                .action(DialogAction.customClick((view, audience) -> {
-                                        if (audience instanceof Player p) {
-                                                LODPlugin plugin = LODPlugin.getInstance();
-                                                if (plugin != null && plugin.getLodManager() != null) {
-                                                        plugin.getLodManager().getSession(p).setQuality(quality);
-                                                        p.sendMessage(Component
-                                                                        .text("LOD Quality set to: ",
-                                                                                        NamedTextColor.GRAY)
-                                                                        .append(Component.text(quality.name(), color)));
-                                                }
-                                        }
-                                }, ClickCallback.Options.builder().uses(100).build()))
-                                .build();
-        }
-
-        private ActionButton createFovButton() {
-                return ActionButton.builder(Component.text("Save FOV & Apply", NamedTextColor.AQUA))
-                                .action(DialogAction.customClick((view, audience) -> {
-                                        float val = view.getFloat("fov");
-                                        if (audience instanceof Player p) {
-                                                LODPlugin plugin = LODPlugin.getInstance();
-                                                if (plugin != null && plugin.getLodManager() != null) {
-                                                        plugin.getLodManager().getSession(p).setFov(val);
-                                                        p.sendMessage(Component.text(
-                                                                        "FOV set to " + (int) val + " (Culling at "
-                                                                                        + (int) (val + 20) + "°)",
-                                                                        NamedTextColor.GREEN));
+                                                        String wdStr = view.getText("water_depth");
+                                                        if (wdStr != null) {
+                                                                boolean enabled = "true".equals(wdStr);
+                                                                plugin.getLodManager().getSession(p).setWaterDepthEnabled(enabled);
+                                                                p.sendMessage(Component
+                                                                                .text("LOD Water Depth set to: ",
+                                                                                                NamedTextColor.GRAY)
+                                                                                .append(Component.text(enabled ? "ON" : "OFF", enabled ? NamedTextColor.GREEN : NamedTextColor.RED)));
+                                                        }
+                                                        String distStr = view.getText("distance");
+                                                        if (distStr != null) {
+                                                                LODDistance d = LODDistance.valueOf(distStr);
+                                                                plugin.getLodManager().getSession(p).setDistance(d);
+                                                                p.sendMessage(Component
+                                                                                .text("LOD Distance set to: ",
+                                                                                                NamedTextColor.GRAY)
+                                                                                .append(Component.text(d.name(),
+                                                                                                NamedTextColor.YELLOW)));
+                                                        }
+                                                        String qualStr = view.getText("quality");
+                                                        if (qualStr != null) {
+                                                                LODQuality q = LODQuality.valueOf(qualStr);
+                                                                if (q == LODQuality.EXTREME) {
+                                                                        io.papermc.paper.dialog.Dialog confirmMenu = io.papermc.paper.registry.RegistryAccess
+                                                                                        .registryAccess()
+                                                                                        .getRegistry(io.papermc.paper.registry.RegistryKey.DIALOG)
+                                                                                        .get(Key.key("lod:quality_extreme_confirm"));
+                                                                        if (confirmMenu != null) {
+                                                                                p.showDialog(confirmMenu);
+                                                                                return; // Stop and let confirm menu handle reopening settings
+                                                                        }
+                                                                } else {
+                                                                        plugin.getLodManager().getSession(p).setQuality(q);
+                                                                        p.sendMessage(Component
+                                                                                        .text("LOD Quality set to: ",
+                                                                                                        NamedTextColor.GRAY)
+                                                                                        .append(Component.text(q.name(), NamedTextColor.GOLD)));
+                                                                }
+                                                        }
                                                         // Attempt to reopen the dialog (so they see it updated if
                                                         // needed)
                                                         io.papermc.paper.dialog.Dialog settingsMenu = io.papermc.paper.registry.RegistryAccess
